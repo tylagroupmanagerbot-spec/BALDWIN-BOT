@@ -1,4 +1,5 @@
-require('dotenv').config();
+// dotenv removed - Render injects ENV directly, no need for .env file on server
+try { require('dotenv').config(); } catch(e){ /* dotenv not installed on Render, ignore */ }
 const fs = require('fs');
 
 const PORT = Number(process.env.PORT) || 3000;
