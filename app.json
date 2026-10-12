@@ -1,8 +1,13 @@
 {
   "name": "BALDWIN-BOT",
-  "description": "WhatsApp bot for Render deployment",
+  "description": "WhatsApp bot powered by Baileys",
   "repository": "https://github.com/tylagroupmanagerbot-spec/BALDWIN-BOT",
   "logo": "https://raw.githubusercontent.com/tylagroupmanagerbot-spec/BALDWIN-BOT/main/assets/repo.jpg",
-  "keywords": ["whatsapp", "bot", "baileys", "render"],
-  "buildpacks": [{ "url": "heroku/nodejs" }]
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "baileys",
+    "nodejs",
+    "render"
+  ]
 }
