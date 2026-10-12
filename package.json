@@ -1,0 +1,142 @@
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, delay } = require('@whiskeysockets/baileys');
+const pino = require('pino');
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const QRCode = require('qrcode');
+const loadCommands = require('./lib/commandLoader');
+
+async function startBot({ state, config }) {
+  const { state: authState, saveCreds } = await useMultiFileAuthState(path.resolve('./data/auth'));
+  const { version } = await fetchLatestBaileysVersion();
+  const logger = pino({ level: 'info' });
+
+  const bot = makeWASocket({
+    version,
+    logger,
+    printQRInTerminal: false,
+    browser: Browsers.ubuntu('BALDWIN-BOT'),
+    auth: authState,
+    syncFullHistory: false,
+    markOnlineOnConnect: true,
+    generateHighQualityLinkPreview: true
+  });
+
+  state.bot = bot;
+
+  async function setBotProfile(sock) {
+    try {
+      if (!sock.user) return;
+      const profilePicUrl = 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=400&q=80';
+      const response = await axios.get(profilePicUrl, { responseType: 'arraybuffer' });
+      const image = Buffer.from(response.data, 'binary');
+      await sock.updateProfilePicture(sock.user.id, image);
+      await sock.updateProfileName(config.BOT_NAME);
+    } catch (error) {
+      console.warn('Profile update skipped:', error.message);
+    }
+  }
+
+  async function requestPairingCode(sock) {
+    try {
+      const code = await sock.requestPairingCode(config.OWNER_NUMBER);
+      state.pairingCode = code;
+      console.log('Your pairing code is:', code);
+      if (global.__botLog) global.__botLog(`Pairing code: ${code}`);
+    } catch (error) {
+      console.warn('Pairing code request failed:', error.message);
+    }
+  }
+
+  bot.ev.on('creds.update', saveCreds);
+
+  bot.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      state.status = 'qr';
+      state.qr = qr;
+      console.log('Scan this QR code in WhatsApp mobile app:');
+      try {
+        await QRCode.toFile(path.join('./data', 'qrcode.png'), qr);
+      } catch (error) {
+        console.warn('Could not save QR file:', error.message);
+      }
+      try {
+        console.log(await QRCode.toString(qr, { type: 'terminal', small: true }));
+      } catch (error) {}
+      return;
+    }
+
+    if (connection === 'open') {
+      state.status = 'online';
+      state.qr = null;
+      console.log('Connection opened successfully.');
+      await setBotProfile(bot);
+      return;
+    }
+
+    if (connection === 'close') {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log('Connection closed due to', lastDisconnect?.error?.output?.statusCode, 'reconnect:', shouldReconnect);
+      if (shouldReconnect) {
+        setTimeout(() => startBot({ state, config }), 3000);
+      }
+    }
+  });
+
+  bot.ev.on('connection.update', async (update) => {
+    const { connection } = update;
+    if (connection === 'open') {
+      try {
+        const commands = loadCommands(path.join(__dirname, 'commands'));
+        state.commands = commands;
+      } catch (error) {
+        console.error('Command loader failed:', error);
+      }
+    }
+  });
+
+  bot.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg || !msg.message || msg.key && msg.key.fromMe) return;
+    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+    if (!text) return;
+
+    const prefix = config.PREFIX;
+    const trimmed = text.trim();
+    if (!trimmed.startsWith(prefix)) return;
+
+    const args = trimmed.slice(prefix.length).trim().split(/\s+/);
+    const commandName = args.shift()?.toLowerCase();
+    if (!commandName) return;
+
+    const commands = state.commands || loadCommands(path.join(__dirname, 'commands'));
+    const cmd = commands.get(commandName) || [...commands.values()].find((entry) => (entry.aliases || []).includes(commandName));
+
+    if (!cmd) return;
+
+    try {
+      await cmd.run({
+        bot,
+        msg,
+        args,
+        text: trimmed,
+        config,
+        state,
+        prefix,
+        isOwner: msg.key.remoteJid === config.OWNER_JID || msg.key.remoteJid?.includes(config.OWNER_NUMBER)
+      });
+    } catch (error) {
+      console.error('Command error:', error);
+      await bot.sendMessage(msg.key.remoteJid, { text: 'Something went wrong while running this command.' });
+    }
+  });
+
+  global.__bot = bot;
+  global.__botState = state;
+
+  return bot;
+}
+
+module.exports = { startBot };
