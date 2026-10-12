@@ -1,86 +1,192 @@
-try{ require('dotenv').config(); }catch{}
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const pino = require('pino');
-const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
-const QRCode = require('qrcode');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BALDWIN BOT | Premium Anime</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--accent:#a855f7;--accent2:#22d3ee;--green:#22c55e;--pink:#ec4899}
+body{min-height:100vh;font-family:'Space Grotesk',sans-serif;display:flex;justify-content:center;align-items:center;padding:16px;color:#fff;background:#070a12;overflow:hidden;position:relative}
+body::before{content:'';position:fixed;inset:0;background:url("./background.jpg") center/cover no-repeat, url("/background.jpg") center/cover no-repeat, radial-gradient(900px 500px at 10% -10%,rgba(168,85,247,.6),transparent),radial-gradient(700px 400px at 90% 110%,rgba(34,211,238,.5),transparent),radial-gradient(500px 300px at 50% 50%,rgba(236,72,153,.25),transparent),#070a12;z-index:-4;filter:brightness(.85) saturate(1.2)}
+body::after{content:'';position:fixed;inset:0;background:linear-gradient(115deg,rgba(7,10,18,.92) 0%, rgba(7,10,18,.65) 40%, rgba(7,10,18,.25) 100%);z-index:-3}
+#particles{position:fixed;inset:0;z-index:-2;pointer-events:none}
+.particle{position:absolute;width:3px;height:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:50%;box-shadow:0 0 10px var(--accent);animation:floatP linear infinite}
+@keyframes floatP{from{transform:translateY(100vh) translateX(0) scale(0);opacity:0}10%{opacity:1}90%{opacity:1}to{transform:translateY(-10vh) translateX(100px) scale(1.5);opacity:0}}
 
-const app = express();
-const PORT = process.env.PORT || 10000;
-app.use(express.json());
-app.use(express.static('public'));
+.anime-girl{position:fixed;right:-20px;bottom:0;height:95vh;width:auto;z-index:-1;pointer-events:none;filter:drop-shadow(0 0 50px rgba(168,85,247,.7)) drop-shadow(0 0 90px rgba(34,211,238,.4)) brightness(1.1);animation:float 6s ease-in-out infinite, glow 3s ease-in-out infinite alternate;opacity:.95}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-18px) scale(1.02)}}
+@keyframes glow{from{filter:drop-shadow(0 0 50px rgba(168,85,247,.7)) drop-shadow(0 0 90px rgba(34,211,238,.4))}to{filter:drop-shadow(0 0 70px rgba(236,72,153,.8)) drop-shadow(0 0 110px rgba(168,85,247,.5))}}
+@media(max-width:900px){.anime-girl{right:-60px;opacity:.6;height:78vh}}
 
-let sock = null;
-let qrData = null;
-let pairingCode = null;
-let isConnected = false;
-let phoneNum = '';
-let currentMode = 'pairing';
+.card{width:100%;max-width:460px;padding:32px 28px 22px;border-radius:30px;background:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.03));border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(32px);-webkit-backdrop-filter:blur(32px);box-shadow:0 40px 100px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.18), 0 0 0 1px rgba(168,85,247,.2), 0 0 60px rgba(168,85,247,.15);animation:pop .8s cubic-bezier(.16,1,.3,1);position:relative}
+.card::before{content:'';position:absolute;top:-1px;left:15%;right:15%;height:1.5px;background:linear-gradient(90deg,transparent,var(--accent),var(--pink),var(--accent2),transparent);box-shadow:0 0 20px var(--accent)}
+@keyframes pop{from{transform:translateY(30px) scale(.94);opacity:0}to{transform:none;opacity:1}}
 
-const authPath = './data/auth';
-try{ fs.mkdirSync(authPath,{recursive:true}); }catch{}
+.top-badge{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}
+.badge{font-size:10px;letter-spacing:.15em;padding:8px 14px;border-radius:100px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);color:#aab;font-weight:700}
+.badge.live{color:#86efac;background:linear-gradient(90deg,rgba(34,197,94,.18),rgba(34,211,238,.12));border-color:rgba(34,197,94,.4);box-shadow:0 0 15px rgba(34,197,94,.3)}
+.badge.premium{background:linear-gradient(90deg,#a855f7,#ec4899);color:#fff;border:0;box-shadow:0 0 20px rgba(168,85,247,.5);animation:shine 2s infinite}
+@keyframes shine{0%,100%{box-shadow:0 0 20px rgba(168,85,247,.5)}50%{box-shadow:0 0 35px rgba(236,72,153,.7)}}
 
-async function startBot(mode='pairing'){
- currentMode = mode;
- const { state, saveCreds } = await useMultiFileAuthState(authPath);
- const { version } = await fetchLatestBaileysVersion();
- sock = makeWASocket({
-  version,
-  auth: state,
-  logger: pino({level:'silent'}),
-  browser: ['Baldwin Bot','Chrome','1.0'],
-  printQRInTerminal: false
- });
- sock.ev.on('creds.update', saveCreds);
- sock.ev.on('connection.update', async (u)=>{
-  if(u.qr){
-   if(currentMode==='qr'){
-    qrData = await QRCode.toDataURL(u.qr);
-   }
-  }
-  if(u.connection==='open'){
-   isConnected=true; qrData=null; pairingCode=null;
-   console.log('[CONNECTED]');
-   try{ require('./main.js')(sock); }catch(e){console.log(e)}
-  }
-  if(u.connection==='close'){ isConnected=false; setTimeout(()=>startBot(currentMode),3000); }
- });
+.logo{font-size:34px;font-weight:800;letter-spacing:-.04em;line-height:1;display:flex;align-items:center;gap:12px}
+.logo span{background:linear-gradient(90deg,#c084fc,#22d3ee,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 0 20px rgba(168,85,247,.7));background-size:200% 100%;animation:grad 4s linear infinite}
+@keyframes grad{0%{background-position:0% 50%}100%{background-position:200% 50%}}
+.subtitle{margin:12px 0 22px;color:#9aa3b8;font-size:13.5px;line-height:1.7}
+.subtitle b{color:#fff;text-shadow:0 0 10px rgba(168,85,247,.5)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:18px}
+.stat{padding:10px;border-radius:12px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.08);text-align:center}
+.stat b{display:block;font-size:16px;color:#fff}
+.stat span{font-size:9px;letter-spacing:.1em;color:#7a859e}
+
+.tabs{display:flex;gap:8px;padding:6px;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.1);border-radius:16px;margin-bottom:20px;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.tab{flex:1;padding:12px 6px;border-radius:12px;border:0;background:transparent;color:#8b95ad;font-weight:700;font-size:12.5px;cursor:pointer;transition:.3s}
+.tab.active{background:#fff;color:#000;box-shadow:0 10px 30px rgba(255,255,255,.35),0 0 0 1px rgba(255,255,255,.3);transform:translateY(-1px)}
+.tab:hover:not(.active){background:rgba(255,255,255,.08);color:#fff}
+
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;box-shadow:0 0 0 4px rgba(34,197,94,.3);animation:pulse 1.8s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}70%{box-shadow:0 0 0 10px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+.input-wrap{position:relative;margin-bottom:14px}
+.input{width:100%;padding:18px 18px 18px 48px;border:1px solid rgba(255,255,255,.14);border-radius:16px;outline:none;background:rgba(0,0,0,.65);color:white;font-size:15px;transition:.3s;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.input:focus{border-color:var(--accent);box-shadow:0 0 0 5px rgba(168,85,247,.25), inset 0 1px 0 rgba(255,255,255,.05)}
+.icon{position:absolute;left:16px;top:50%;transform:translateY(-50%);font-size:18px}
+.button{width:100%;border:0;padding:18px;border-radius:16px;cursor:pointer;font-size:15px;font-weight:800;background:linear-gradient(90deg,#a855f7,#ec4899,#22d3ee);background-size:200% 100%;color:#fff;transition:.3s;position:relative;overflow:hidden;letter-spacing:.02em;box-shadow:0 12px 35px rgba(168,85,247,.45);animation:grad 3s linear infinite}
+.button:hover{transform:translateY(-2px);box-shadow:0 18px 45px rgba(168,85,247,.65)}
+.button:disabled{opacity:.6}
+.result{display:none;margin-top:18px;padding:20px;border-radius:20px;background:linear-gradient(135deg,rgba(168,85,247,.18),rgba(236,72,153,.12),rgba(255,255,255,.04));border:1px dashed rgba(168,85,247,.5);animation:pop .5s;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 0 30px rgba(168,85,247,.15)}
+.result.show{display:block}
+.code{font-family:'JetBrains Mono',monospace;margin:16px 0;font-size:40px;font-weight:800;letter-spacing:.2em;text-align:center;color:#fff;text-shadow:0 0 25px rgba(168,85,247,.9),0 0 50px rgba(34,211,238,.6),0 0 80px rgba(236,72,153,.3)}
+.qrbox{margin:12px auto;width:270px;height:270px;background:#fff;border-radius:22px;display:grid;place-items:center;overflow:hidden;box-shadow:0 15px 50px rgba(0,0,0,.6),0 0 0 5px rgba(168,85,247,.25),0 0 40px rgba(168,85,247,.2)}
+.qrbox img{width:100%;height:100%;object-fit:contain;padding:12px}
+.feature-list{display:none;max-height:260px;overflow:auto;padding-right:6px}
+.feature-list.show{display:block}
+.feature-item{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-bottom:6px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);font-size:12.5px}
+.feature-item b{color:#c4b5fd}
+.actions{display:flex;gap:10px;margin-top:14px}
+.small{flex:1;padding:13px;border-radius:13px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#fff;font-size:13px;font-weight:700;cursor:pointer;transition:.25s}
+.small:hover{background:rgba(255,255,255,.14);transform:translateY(-1px)}
+.small.primary{background:#fff;color:#000;box-shadow:0 8px 25px rgba(255,255,255,.25)}
+.message{margin-top:14px;font-size:12.5px;line-height:1.6;color:#aab;text-align:center}
+.error{color:#fda4af !important}
+.footer{margin-top:22px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#6b7280;border-top:1px solid rgba(255,255,255,.08);padding-top:16px}
+.footer b{color:#9aa3b8}
+</style>
+</head>
+<body>
+<div id="particles"></div>
+<img src="./background.jpg" class="anime-girl" alt="" onerror="this.style.display='none'">
+
+<div class="card">
+<div class="top-badge">
+<div class="badge premium">👑 PREMIUM ANIME • SIMON TECH</div>
+<div class="badge live"><span class="status-dot"></span> <span id="status">Checking...</span></div>
+</div>
+
+<div class="logo"><span>BALDWIN</span> BOT</div>
+<div class="subtitle">Ultra Premium Waifu Edition 💎🌸 Owner: <b>Simon Tech</b> • 09166265317<br>🔥 1000+ Features • Secure • 99.9% Uptime • No Ban</div>
+
+<div class="stats">
+<div class="stat"><b id="s1">1000+</b><span>FEATURES</span></div>
+<div class="stat"><b id="s2">99.9%</b><span>UPTIME</span></div>
+<div class="stat"><b id="s3">⚡</b><span>FAST</span></div>
+</div>
+
+<div class="tabs">
+<button class="tab active" id="tabPair" onclick="switchMode('pair')">✨ Pairing</button>
+<button class="tab" id="tabQr" onclick="switchMode('qr')">QR Code</button>
+<button class="tab" id="tabFeat" onclick="switchMode('feat')">🔥 Menu</button>
+</div>
+
+<div id="pairView">
+<div class="input-wrap">
+<div class="icon">📱</div>
+<input id="phone" class="input" type="tel" value="2349166265317" placeholder="2349166265317">
+</div>
+<button id="pairButton" class="button" onclick="generatePairingCode()">Generate Premium Code ⚡💎</button>
+</div>
+
+<div id="qrView" style="display:none;text-align:center">
+<div class="qrbox" id="qrbox"><span style="color:#888;font-size:12px">Premium QR loading ✨</span></div>
+<button class="button" style="margin-top:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);box-shadow:none;animation:none" onclick="requestQR()">Refresh QR 🔄</button>
+</div>
+
+<div id="featView" class="feature-list">
+<div class="feature-item"><span>🎨 Sticker Maker</span><b>.s .sticker</b></div>
+<div class="feature-item"><span>⬇️ All Downloader</span><b>.play .tiktok</b></div>
+<div class="feature-item"><span>🤖 AI Chat GPT-4</span><b>.ai .gpt</b></div>
+<div class="feature-item"><span>🛡️ Antilink / Antispam</span><b>.antilink</b></div>
+<div class="feature-item"><span>👑 Group Management</span><b>.kick .add</b></div>
+<div class="feature-item"><span>🎮 Games + Economy</span><b>.slot .daily</b></div>
+<div class="feature-item"><span>🔞 Premium Tools</span><b>.anime +18</b></div>
+<div class="feature-item"><span>💎 1000+ Commands</span><b>.menu</b></div>
+</div>
+
+<div id="result" class="result">
+<div style="font-size:10px;letter-spacing:.22em;color:#f0abfc;text-align:center;font-weight:800">💎 YOUR PREMIUM PAIRING CODE</div>
+<div id="code" class="code">--------</div>
+<div class="actions">
+<button class="small primary" onclick="copyCode()">📋 Copy</button>
+<button class="small" onclick="generatePairingCode()">🔄 New Code</button>
+</div>
+<div class="message">WhatsApp → Linked Devices → Link a device → Link with phone number</div>
+</div>
+
+<div id="message" class="message">Premium Edition Active 🌸 No simulation, Real bot</div>
+
+<div class="footer">
+<div>© 2026 <b>Baldwin Premium x Sultan</b></div>
+<div><b id="connInfo">Not Connected</b></div>
+</div>
+</div>
+
+<script>
+let currentMode='pair'
+const statusEl=document.getElementById('status'),connInfo=document.getElementById('connInfo'),resultEl=document.getElementById('result'),codeEl=document.getElementById('code'),msgEl=document.getElementById('message'),btn=document.getElementById('pairButton'),qrbox=document.getElementById('qrbox')
+function switchMode(m){
+ currentMode=m
+ document.getElementById('tabPair').classList.toggle('active',m==='pair')
+ document.getElementById('tabQr').classList.toggle('active',m==='qr')
+ document.getElementById('tabFeat').classList.toggle('active',m==='feat')
+ document.getElementById('pairView').style.display=m==='pair'?'block':'none'
+ document.getElementById('qrView').style.display=m==='qr'?'block':'none'
+ document.getElementById('featView').style.display=m==='feat'?'block':'none'
+ document.getElementById('featView').classList.toggle('show',m==='feat')
+ if(m!=='feat') fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})}).catch(()=>fetch('/setmode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})}))
+ if(m==='qr') requestQR()
 }
-
-app.get('/api/status', (req,res)=>{
- res.json({connected:isConnected, status:isConnected?'Connected':currentMode, mode:currentMode, qr:qrData, code:pairingCode, number:phoneNum});
-});
-app.get('/info', (req,res)=>{
- res.json({isConnected, qr:qrData, code:pairingCode, mode:currentMode});
-});
-app.post('/api/mode', async (req,res)=>{
- currentMode = req.body.mode==='qr'?'qr':'pairing';
- if(currentMode==='qr' && sock){ try{ sock.ev.emit('connection.update',{qr: null}); }catch{} }
- if(!sock) startBot(currentMode);
- res.json({ok:true, mode:currentMode});
-});
-app.post('/setmode', (req,res)=>{ currentMode = req.body.mode==='qr'?'qr':'pairing'; res.json({ok:true}); });
-
-app.post('/api/pair', async (req,res)=>{
+async function checkStatus(){
  try{
-  let num = (req.body.phoneNumber||req.body.number||'').replace(/\D/g,'');
-  if(!num) return res.json({error:'Enter number'});
-  phoneNum=num;
-  if(!sock) await startBot('pairing');
-  if(!sock.authState.creds.registered){
-   let code = await sock.requestPairingCode(num);
-   pairingCode=code;
-   return res.json({pairingCode:code, code});
-  }else{
-   return res.json({message:'Already paired'});
-  }
- }catch(e){ res.json({error:e.message}); }
-});
-app.post('/pair', async (req,res)=>{
- req.body.phoneNumber=req.body.number; 
- return app._router.handle(req,res,()=>{},'api');
-});
-
-startBot('pairing');
-app.listen(PORT,'0.0.0.0',()=>console.log(`BALDWIN running on ${PORT}`));
+  let r=await fetch('/api/status'); if(!r.ok) r=await fetch('/info')
+  const d=await r.json()
+  const connected=d.connected||d.isConnected
+  statusEl.textContent=connected?'PREMIUM CONNECTED 💎':'● '+(d.status||d.mode||'Waiting')
+  connInfo.textContent=connected?'CONNECTED: '+(d.number||''):'Not Connected'
+  if(d.qr && currentMode==='qr'){ qrbox.innerHTML=`<img src="${d.qr}" alt="qr">` }
+  if(d.code && d.code.length>=4){ codeEl.textContent=d.code; resultEl.classList.add('show') }
+ }catch{statusEl.textContent='Offline'}
+}
+async function generatePairingCode(){
+ const phone=document.getElementById('phone').value.replace(/\D/g,'')
+ if(!phone){setErr('Enter number');return}
+ btn.disabled=true; btn.textContent='Generating Premium... 💎'; msgEl.textContent=''
+ try{
+  let response=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phoneNumber:phone,number:phone})})
+  if(!response.ok) response=await fetch('/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:phone})})
+  const data=await response.json()
+  const code=data.pairingCode||data.code
+  if(!code) throw new Error(data.message||data.error||'Failed')
+  codeEl.textContent=code; resultEl.classList.add('show'); resultEl.style.display='block'
+  msgEl.textContent='Premium Code Generated! Expires in 60s 💎🌸'; msgEl.className='message'
+ }catch(e){setErr(e.message)}finally{btn.disabled=false;btn.textContent='Generate Premium Code ⚡💎'}
+}
+async function requestQR(){ qrbox.innerHTML='<span style="color:#999">Generating Premium QR... 💎</span>'; try{ await fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'qr'})}) }catch{} }
+function copyCode(){navigator.clipboard.writeText(codeEl.textContent);msgEl.textContent='Copied Premium Code! ✅💎';}
+function setErr(t){msgEl.textContent=t;msgEl.className='message error'}
+// particles
+const cont=document.getElementById('particles')
+for(let i=0;i<25;i++){ let p=document.createElement('div'); p.className='particle'; p.style.left=Math.random()*100+'%'; p.style.animationDuration=(8+Math.random()*12)+'s'; p.style.animationDelay=Math.random()*8+'s'; p.style.width=p.style.height=(1+Math.random()*3)+'px'; cont.appendChild(p) }
+checkStatus();setInterval(checkStatus,2500)
+</script>
+</body>
+</html>
