@@ -1,1 +1,86 @@
-<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BALDWIN 1000</title><style>body{margin:0;background:#070a12;color:#fff;font-family:sans-serif;display:flex;justify-content:center;padding:12px}.c{width:100%;max-width:420px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:16px;backdrop-filter:blur(20px)}.t{display:flex;gap:4px;background:#000;padding:3px;border-radius:10px;margin:10px 0}.b{flex:1;padding:8px;border:0;border-radius:8px;background:0;color:#888;font-weight:700;font-size:10px}.b.a{background:#fff;color:#000}input{width:100%;padding:12px;border-radius:10px;background:#000;border:1px solid #333;color:#fff}button{width:100%;padding:12px;border-radius:10px;border:0;background:linear-gradient(90deg,#a855f7,#22d3ee);color:#fff;font-weight:800;margin-top:8px}.g{max-height:300px;overflow:auto;display:grid;gap:6px;margin-top:8px}.f{display:flex;justify-content:space-between;padding:8px;background:#111;border-radius:8px;font-size:10px}.o{width:28px;height:16px;background:#333;border-radius:99px;position:relative}.o.on{background:#22c55e}.o::after{content:'';position:absolute;width:12px;height:12px;background:#fff;border-radius:50%;top:2px;left:2px;transition:.2s}.o.on::after{left:14px}.code{font-size:28px;text-align:center;letter-spacing:.2em;margin:8px 0}</style></head><body><div class="c"><b>BALDWIN BOT</b> • 1000 Features • SIMON TECH<div class="t"><button class="b a" id="p1" onclick="m('p')">PAIR</button><button class="b" id="p2" onclick="m('q')">QR</button><button class="b" id="p3" onclick="m('f')">FEAT</button><button class="b" id="p4" onclick="m('a')">ADMIN</button></div><div id="v1"><input id="ph" value="2349166265317"><button onclick="pair()">Generate Code ⚡</button><div id="cd" class="code">--------</div><div id="msg" style="font-size:10px;text-align:center"></div></div><div id="v2" style="display:none;text-align:center"><div id="qr" style="background:#fff;color:#000;padding:40px;border-radius:12px">QR here</div><button onclick="qr()">Refresh QR</button></div><div id="v3" style="display:none"><input id="sf" placeholder="Search 1000" oninput="fil('sf','g1')"><div id="g1" class="g"></div></div><div id="v4" style="display:none"><input id="pin" type="password" placeholder="PIN 0916"><button onclick="un()">Unlock 👑</button><div id="ap" style="display:none"><input id="sa" placeholder="Search" oninput="fil('sa','g2')"><div id="g2" class="g"></div></div></div></div><script>let PIN='',F={};function m(x){['p','q','f','a'].forEach(y=>{document.getElementById('v'+(y=='p'?1:y=='q'?2:y=='f'?3:4)).style.display=x==y?'block':'none';document.getElementById('p'+(y=='p'?1:y=='q'?2:y=='f'?3:4)).classList.toggle('a',x==y)});if(x=='q')qr();if(x=='f')lf()}async function pair(){let p=document.getElementById('ph').value.replace(/\D/g,'');let r=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phoneNumber:p})});let d=await r.json();if(d.code||d.pairingCode){document.getElementById('cd').textContent=d.code||d.pairingCode;document.getElementById('msg').textContent='Expires 60s'}else document.getElementById('msg').textContent=d.error}async function qr(){document.getElementById('qr').textContent='Generating...';await fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'qr'})});let s=await (await fetch('/api/status')).json();if(s.qr)document.getElementById('qr').innerHTML='<img src="'+s.qr+'" style="width:180px">' }async function lf(){let r=await fetch('/api/features');F=await r.json();let g=document.getElementById('g1');g.innerHTML='';Object.entries(F).forEach(([k,v])=>g.innerHTML+=`<div class="f" data-k="${k}"><span>${k}</span><div class="o ${v?'on':''}"></div></div>`)}function fil(inp,grid){let q=document.getElementById(inp).value.toLowerCase();document.querySelectorAll('#'+grid+' .f').forEach(e=>e.style.display=e.dataset.k.toLowerCase().includes(q)?'flex':'none')}async function un(){PIN=document.getElementById('pin').value;let r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:PIN})});let d=await r.json();if(!d.success)return alert('Wrong PIN');document.getElementById('ap').style.display='block';let f=await (await fetch('/api/features')).json();let g=document.getElementById('g2');g.innerHTML='';Object.entries(f).forEach(([k,v])=>g.innerHTML+=`<div class="f" data-k="${k}"><span>${k}</span><div class="o ${v?'on':''}" onclick="tog('${k}',${!v})"></div></div>`)}async function tog(k,v){await fetch('/api/features',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:PIN,key:k,value:v})});un()}setInterval(async()=>{let s=await (await fetch('/api/status')).json();if(s.qr)document.getElementById('qr').innerHTML='<img src="'+s.qr+'" style="width:180px">';if(s.code)document.getElementById('cd').textContent=s.code},3000);lf()</script></body></html>
+try{ require('dotenv').config(); }catch{}
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const pino = require('pino');
+const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const QRCode = require('qrcode');
+
+const app = express();
+const PORT = process.env.PORT || 10000;
+app.use(express.json());
+app.use(express.static('public'));
+
+let sock = null;
+let qrData = null;
+let pairingCode = null;
+let isConnected = false;
+let phoneNum = '';
+let currentMode = 'pairing';
+
+const authPath = './data/auth';
+try{ fs.mkdirSync(authPath,{recursive:true}); }catch{}
+
+async function startBot(mode='pairing'){
+ currentMode = mode;
+ const { state, saveCreds } = await useMultiFileAuthState(authPath);
+ const { version } = await fetchLatestBaileysVersion();
+ sock = makeWASocket({
+  version,
+  auth: state,
+  logger: pino({level:'silent'}),
+  browser: ['Baldwin Bot','Chrome','1.0'],
+  printQRInTerminal: false
+ });
+ sock.ev.on('creds.update', saveCreds);
+ sock.ev.on('connection.update', async (u)=>{
+  if(u.qr){
+   if(currentMode==='qr'){
+    qrData = await QRCode.toDataURL(u.qr);
+   }
+  }
+  if(u.connection==='open'){
+   isConnected=true; qrData=null; pairingCode=null;
+   console.log('[CONNECTED]');
+   try{ require('./main.js')(sock); }catch(e){console.log(e)}
+  }
+  if(u.connection==='close'){ isConnected=false; setTimeout(()=>startBot(currentMode),3000); }
+ });
+}
+
+app.get('/api/status', (req,res)=>{
+ res.json({connected:isConnected, status:isConnected?'Connected':currentMode, mode:currentMode, qr:qrData, code:pairingCode, number:phoneNum});
+});
+app.get('/info', (req,res)=>{
+ res.json({isConnected, qr:qrData, code:pairingCode, mode:currentMode});
+});
+app.post('/api/mode', async (req,res)=>{
+ currentMode = req.body.mode==='qr'?'qr':'pairing';
+ if(currentMode==='qr' && sock){ try{ sock.ev.emit('connection.update',{qr: null}); }catch{} }
+ if(!sock) startBot(currentMode);
+ res.json({ok:true, mode:currentMode});
+});
+app.post('/setmode', (req,res)=>{ currentMode = req.body.mode==='qr'?'qr':'pairing'; res.json({ok:true}); });
+
+app.post('/api/pair', async (req,res)=>{
+ try{
+  let num = (req.body.phoneNumber||req.body.number||'').replace(/\D/g,'');
+  if(!num) return res.json({error:'Enter number'});
+  phoneNum=num;
+  if(!sock) await startBot('pairing');
+  if(!sock.authState.creds.registered){
+   let code = await sock.requestPairingCode(num);
+   pairingCode=code;
+   return res.json({pairingCode:code, code});
+  }else{
+   return res.json({message:'Already paired'});
+  }
+ }catch(e){ res.json({error:e.message}); }
+});
+app.post('/pair', async (req,res)=>{
+ req.body.phoneNumber=req.body.number; 
+ return app._router.handle(req,res,()=>{},'api');
+});
+
+startBot('pairing');
+app.listen(PORT,'0.0.0.0',()=>console.log(`BALDWIN running on ${PORT}`));
