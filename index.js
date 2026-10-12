@@ -1,14 +1,12 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const cors = require('cors');
 const { startBot } = require('./main');
 const config = require('./config');
 
 const app = express();
 
-// Middleware
-app.use(cors());
+// Middleware - CORS removed (no extra module needed)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -129,10 +127,22 @@ app.post('/api/pair', async (req, res) => {
   }
 });
 
-// Legacy /pair
-app.post('/pair', (req, res) => {
-  req.body.phoneNumber = req.body.number;
-  return app._router.handle(req, res, () => {}, 'POST', '/api/pair');
+// Legacy /pair - fixed to avoid app._router crash
+app.post('/pair', async (req, res) => {
+  try {
+    let phoneNumber = String(req.body.number || req.body.phoneNumber || '').replace(/\D/g, '');
+    if (!phoneNumber) return res.status(400).json({ ok: false, message: 'Enter number' });
+    let code;
+    if (typeof state.requestPairingCode === 'function') {
+      code = await state.requestPairingCode(phoneNumber);
+    } else {
+      code = await state.bot.requestPairingCode(phoneNumber);
+      state.pairingCode = code;
+    }
+    return res.json({ ok: true, pairingCode: code, code });
+  } catch (e) {
+    return res.status(500).json({ ok: false, message: e.message });
+  }
 });
 
 // ============= START =============
