@@ -16,7 +16,8 @@
     "fs-extra": "^11.2.0",
     "moment-timezone": "^0.5.45",
     "node-fetch": "^2.7.0",
-    "file-type": "^16.5.4"
+    "file-type": "^16.5.4",
+    "dotenv": "^16.4.5"
   },
   "engines": {
     "node": ">=18.0.0"
