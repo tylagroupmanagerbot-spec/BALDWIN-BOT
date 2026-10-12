@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: baldwin-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: NODE_ENV
+        value: production
+      - key: PREFIX
+        value: '!'
+      - key: BOT_NAME
+        value: Baldwin Bot
+      - key: OWNER_NAME
+        value: Simon Tech Inc
+      - key: OWNER_NUMBER
+        value: '2349166265317'
+      - key: OWNER_JID
+        value: '2349166265317@s.whatsapp.net'
+      - key: RENDER
+        value: 'true'

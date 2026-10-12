@@ -1,8 +1,45 @@
 {
   "name": "BALDWIN-BOT",
-  "description": "WhatsApp bot for Render deployment",
+  "description": "Premium WhatsApp Bot for Render Deployment",
   "repository": "https://github.com/tylagroupmanagerbot-spec/BALDWIN-BOT",
-  "logo": "https://raw.githubusercontent.com/tylagroupmanagerbot-spec/BALDWIN-BOT/main/assets/repo.jpg",
-  "keywords": ["whatsapp", "bot", "baileys", "render"],
-  "buildpacks": [{ "url": "heroku/nodejs" }]
+  "logo": "https://raw.githubusercontent.com/tylagroupmanagerbot-spec/BALDWIN-BOT/render-bot-setup/assets/bot_pfp.jpg",
+  "keywords": ["whatsapp", "baileys", "bot", "automation", "render"],
+  "stack": "heroku-22",
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    }
+  ],
+  "env": {
+    "PORT": {
+      "description": "Port to run the bot server on",
+      "value": "3000"
+    },
+    "PREFIX": {
+      "description": "Command prefix for the bot",
+      "value": "!"
+    },
+    "BOT_NAME": {
+      "description": "Display name for the bot",
+      "value": "Baldwin Bot"
+    },
+    "OWNER_NAME": {
+      "description": "Owner/creator name",
+      "value": "Simon Tech Inc"
+    },
+    "OWNER_NUMBER": {
+      "description": "Owner WhatsApp number without + (e.g., 2349166265317)",
+      "value": "2349166265317"
+    },
+    "OWNER_JID": {
+      "description": "Owner WhatsApp JID (number@s.whatsapp.net)",
+      "value": "2349166265317@s.whatsapp.net"
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "free"
+    }
+  }
 }
