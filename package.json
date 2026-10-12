@@ -1,20 +1,24 @@
 {
   "name": "baldwin-bot",
-  "version": "1.0.0",
-  "description": "WhatsApp bot using Baileys",
+  "version": "2.0.0",
+  "description": "BALDWIN BOT - Simon Tech Inc",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
-  },
-  "engines": {
-    "node": ">=20"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.18",
-    "axios": "^1.7.9",
-    "dotenv": "^16.4.7",
-    "express": "^5.1.0",
-    "pino": "^9.6.0",
-    "qrcode": "^1.5.4"
+    "express": "^4.19.2",
+    "qrcode": "^1.5.4",
+    "pino": "^9.3.2",
+    "axios": "^1.7.2",
+    "fs-extra": "^11.2.0",
+    "moment-timezone": "^0.5.45",
+    "node-fetch": "^2.7.0",
+    "file-type": "^16.5.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
