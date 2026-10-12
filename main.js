@@ -16,7 +16,6 @@ const loadCommands = require('./lib/commandLoader');
 
 let reconnectTimer = null;
 
-// Prevent crash
 process.on('uncaughtException', (e) => console.log('[ANTICRASH] Uncaught:', e.message));
 process.on('unhandledRejection', (e) => console.log('[ANTICRASH] Rejection:', e?.message || e));
 
@@ -50,9 +49,10 @@ async function startBot({ state, config }) {
 
   state.bot = bot;
 
-  // Commands
   try {
-    state.commands = loadCommands(path.join(__dirname, 'commands'));
+    const cmdPath = path.join(__dirname, 'commands');
+    if(!fs.existsSync(cmdPath)) fs.mkdirSync(cmdPath, {recursive:true});
+    state.commands = loadCommands(cmdPath);
     console.log(`[BALDWIN] Loaded ${state.commands.size} commands`);
   } catch (e) {
     console.error('[BALDWIN] Command load fail:', e);
@@ -61,54 +61,57 @@ async function startBot({ state, config }) {
 
   bot.ev.on('creds.update', saveCreds);
 
-  // ===== FIXED PAIRING CODE FUNCTION =====
+  // ===== 100% LINK FIX =====
   state.requestPairingCode = async (phoneNumber) => {
     try {
       let num = String(phoneNumber).replace(/\D/g, '');
       if (!num) throw new Error('Invalid number');
       if (num.length < 10) throw new Error('Number too short, use country code. Ex: 234...');
 
-      // Baileys: if already registered, don't allow new pairing
+      // FIX: If already registered, delete and restart fresh
       if (authState.creds.registered) {
-        throw new Error('Already registered. Delete data/auth to pair new number');
+        console.log('[PAIR] Already registered, cleaning old auth for relink...');
+        fs.rmSync(authDir, { recursive: true, force: true });
+        throw new Error('Old session removed. Wait 3 sec and Generate again - will work now');
       }
 
       console.log(`[PAIR] Requesting code for ${num}...`);
-      
-      // Small delay fixes "failed to generate" on Render
-      await new Promise(r=>setTimeout(r,1000));
-      
+
+      // FIX: Wait for socket to be ready
+      let tries = 0;
+      while(!bot.ws || bot.ws.readyState!== 1) {
+        if(tries++ > 10) break;
+        await new Promise(r=>setTimeout(r,500));
+      }
+
       const code = await bot.requestPairingCode(num);
-      
+
       state.pairingCode = code;
       state.status = 'pairing';
       state.lastPairNumber = num;
-      
+
       console.log(`[PAIR] ✅ Code for ${num}: ${code}`);
-      
-      // Auto clear after 90s
-      setTimeout(() => { 
+
+      setTimeout(() => {
         if(state.pairingCode===code) {
           state.pairingCode=null;
           console.log('[PAIR] Code expired');
         }
       }, 90000);
-      
+
       return code;
     } catch (err) {
       console.error('[PAIR FAIL]', err?.message || err);
-      // Give user clear reason
-      if(err.message?.includes('already')){
+      if(err.message?.includes('already') || err.message?.includes('removed')){
         throw err;
       }
       if(err.message?.includes('too many')){
         throw new Error('Too many attempts. Wait 5 mins then try again');
       }
-      throw new Error(err.message || 'Failed to generate. Make sure number is valid WhatsApp number and you deleted old session');
+      throw new Error(err.message || 'Failed. Delete data/auth on Render Shell: rm -rf data/auth and try again');
     }
   };
 
-  // QR Handler
   bot.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
@@ -120,8 +123,7 @@ async function startBot({ state, config }) {
         if(state.status!=='pairing') state.status = 'qr';
         await QRCode.toFile(path.join(__dirname, 'data', 'qrcode.png'), qr);
       } catch {}
-      
-      console.log(`[BALDWIN] QR ready - Dashboard: http://localhost:${config.PORT||3000}`);
+      console.log(`[BALDWIN] QR ready`);
     }
 
     if (connection === 'open') {
@@ -130,7 +132,7 @@ async function startBot({ state, config }) {
       state.qr = null;
       state.qrRaw = null;
       state.pairingCode = null;
-      
+
       const jid = bot.user?.id || '';
       state.number = jid.split(':')[0];
       state.jid = jid;
@@ -138,11 +140,11 @@ async function startBot({ state, config }) {
       console.log(`\n[CONNECTED] ${state.number} Owner: ${config.OWNER_NAME}\n`);
 
       try {
-        await bot.updateProfileStatus(`BALDWIN BOT • ${config.OWNER_NAME} • ${config.ORIGINAL_NUMBER} • Online ⚡`);
+        await bot.updateProfileStatus(`BALDWIN BOT • ${config.OWNER_NAME} • Online ⚡`);
       } catch {}
 
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-      
+
       try {
         if(config.OWNER_JID) await bot.sendMessage(config.OWNER_JID, { text: `*${config.BOT_NAME} CONNECTED* ✅\nNumber: ${state.number}\n${new Date().toLocaleString()}` });
       } catch {}
@@ -152,17 +154,23 @@ async function startBot({ state, config }) {
     if (connection === 'close') {
       state.connected = false;
       const code = lastDisconnect?.error?.output?.statusCode;
-      console.log('[DISCONNECT]', code, lastDisconnect?.error?.message);
+      const msg = lastDisconnect?.error?.message || '';
+      console.log('[DISCONNECT]', code, msg);
 
-      if (code === DisconnectReason.loggedOut) {
+      // FIX: 401 + loggedOut both mean delete
+      if (code === DisconnectReason.loggedOut || code === 401) {
         state.status = 'logged-out';
-        console.log('[BALDWIN] Logged out. Delete data/auth folder on Render Shell: rm -rf data/auth/*');
+        console.log('[BALDWIN] Logged out - Auto cleaning auth in 2s...');
+        setTimeout(()=> {
+          try{ fs.rmSync(authDir, { recursive: true, force: true }); }catch{}
+          state.status = 'qr';
+        },2000);
         return;
       }
 
       state.status = 'reconnecting';
       if (!reconnectTimer) {
-        const delay = code === DisconnectReason.restartRequired ? 2000 : 4000;
+        const delay = code === DisconnectReason.restartRequired? 2000 : 4000;
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null;
           startBot({ state, config }).catch(console.error);
@@ -171,9 +179,9 @@ async function startBot({ state, config }) {
     }
   });
 
-  // MESSAGE HANDLER
+  // MESSAGE HANDLER - FIX FOR NO CMD
   bot.ev.on('messages.upsert', async ({ messages, type }) => {
-    if(type !== 'notify') return;
+    if(type!== 'notify') return;
     for(const msg of messages){
       if (!msg?.message || msg.key?.fromMe) continue;
 
@@ -181,6 +189,9 @@ async function startBot({ state, config }) {
       if (!text) continue;
 
       const prefix = config.PREFIX || '.';
+      // DEBUG LOG - you will see this in Render
+      if(text.startsWith(prefix)) console.log('[MSG]', text, 'FROM', msg.key.remoteJid);
+
       if (!text.trim().startsWith(prefix)) continue;
 
       const parts = text.trim().slice(prefix.length).trim().split(/\s+/);
@@ -191,13 +202,22 @@ async function startBot({ state, config }) {
       if (!command) {
         command = [...state.commands.values()].find(c => Array.isArray(c.aliases) && c.aliases.includes(cmdName));
       }
-      if (!command) continue;
+      if (!command) {
+        console.log('[CMD NOT FOUND]', cmdName, 'Available:', [...state.commands.keys()].slice(0,10));
+        continue;
+      }
 
       try {
         const remoteJid = msg.key.remoteJid;
         const ownerNumber = String(config.OWNER_NUMBER || config.ORIGINAL_NUMBER || '').replace(/\D/g,'');
         const sender = msg.key.participant || remoteJid;
         const isOwner = remoteJid === config.OWNER_JID || sender.includes(ownerNumber) || remoteJid.includes(ownerNumber);
+
+        // FIX: If PUBLIC_MODE true, allow everyone
+        if(config.PUBLIC_MODE === false &&!isOwner) {
+          console.log('[BLOCKED] Not owner and PUBLIC_MODE false');
+          continue;
+        }
 
         await bot.sendPresenceUpdate('composing', remoteJid).catch(()=>{});
 
