@@ -1,9 +1,9 @@
-// dotenv removed - Render injects ENV directly
+// Render injects ENV directly - dotenv optional
 try { require('dotenv').config(); } catch(e){}
 
 const fs = require('fs');
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.PORT) || 10000;
 
 const ORIGINAL_NUMBER = '2349166265317';
 const OWNER_NUMBER_RAW = String(process.env.OWNER_NUMBER || ORIGINAL_NUMBER).replace(/\D/g, '');
@@ -15,7 +15,7 @@ const ALL_OWNERS = [...new Set([OWNER_NUMBER, ORIGINAL_NUMBER, ...EXTRA_OWNERS])
 module.exports = {
   BOT_NAME: process.env.BOT_NAME || 'BALDWIN-BOT',
   BOT_FULL_NAME: 'Baldwin iv x sultan Saladi',
-  VERSION: '2.0.0 Premium',
+  VERSION: '2.0.0 Premium - 1000 Features',
   
   OWNER_NAME: process.env.OWNER_NAME || 'Simon Tech Inc',
   ORIGINAL_NUMBER: ORIGINAL_NUMBER,
@@ -32,22 +32,24 @@ module.exports = {
   QR_PATH: process.env.QR_PATH || './data/qrcode.png',
   DATA_PATH: './data',
 
-  PAIRING_MODE: true, // FORCE pairing for link
+  PAIRING_MODE: true,
   QR_MODE: false,
-  DEFAULT_MODE: 'pairing',
+  DEFAULT_MODE: process.env.DEFAULT_MODE || 'pairing',
 
   PORT,
   HOST: '0.0.0.0',
-  BASE_URL: process.env.BASE_URL || (process.env.RENDER_EXTERNAL_URL ? process.env.RENDER_EXTERNAL_URL : `http://localhost:${PORT}`),
+  BASE_URL: process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`,
   RENDER: Boolean(process.env.RENDER || process.env.RENDER_EXTERNAL_URL),
 
-  AUTO_READ: false,
-  AUTO_TYPING: true,
-  AUTO_BIO: true,
-  ANTI_DELETE: false,
-  PUBLIC_MODE: true, // FORCE true so commands work
+  ADMIN_PIN: process.env.ADMIN_PIN || '0916',
 
-  SESSION_ENCRYPTION: process.env.SESSION_KEY || null,
+  AUTO_READ: false,
+  AUTO_TYPING: String(process.env.AUTO_TYPING || 'true') === 'true',
+  AUTO_BIO: String(process.env.AUTO_BIO || 'true') === 'true',
+  ANTI_DELETE: String(process.env.ANTI_DELETE || 'false') === 'true',
+  PUBLIC_MODE: String(process.env.PUBLIC_MODE || 'true') === 'true',
+
+  SESSION_ENCRYPTION: process.env.SESSION_KEY || 'BALDWIN_PREMIUM_2026',
 
   isOwner: (jid) => {
     if(!jid) return false;
