@@ -26,7 +26,6 @@ const state = {
   requestPairingCode: null
 };
 
-// MAIN
 app.get('/', (req, res) => {
   const indexPath = path.join(publicDir, 'index.html');
   if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
@@ -66,28 +65,37 @@ app.post('/api/mode', (req,res)=>{
   if(!['qr','pairing'].includes(mode)) return res.status(400).json({ok:false});
   state.mode=mode;
   console.log(`[MODE] ${mode}`);
-  // trigger restart in main.js
   if(state.bot) state.status = mode==='qr' ? 'qr' : 'pairing';
   return res.json({ok:true,mode});
 });
 app.post('/setmode',(req,res)=>{ state.mode=req.body.mode; res.json({ok:true}); });
 
-// PAIRING - FIXED VERSION
+// PAIRING - 100% LINK FIX
 app.post('/api/pair', async (req,res)=>{
   try{
     let phoneNumber = String(req.body.phoneNumber||req.body.number||'').replace(/\D/g,'');
     if(!phoneNumber) return res.status(400).json({ok:false,message:'Enter number e.g 2349166265317'});
     if(phoneNumber.length<10) return res.status(400).json({ok:false,message:'Invalid number'});
-    if(!state.bot) return res.status(503).json({ok:false,message:'Bot is starting, wait 5 seconds and retry'});
+    if(!state.bot) return res.status(503).json({ok:false,message:'Bot is starting, wait 10 seconds and retry - check logs for [BOOT]'});
     if(state.status==='online') return res.status(400).json({ok:false,message:'Already connected as '+state.number});
 
     let code;
-    if(typeof state.requestPairingCode==='function'){
-      code = await state.requestPairingCode(phoneNumber);
-    } else {
-      // fallback for old main.js
-      code = await state.bot.requestPairingCode(phoneNumber);
+    try {
+      if(typeof state.requestPairingCode==='function'){
+        code = await state.requestPairingCode(phoneNumber);
+      } else {
+        code = await state.bot.requestPairingCode(phoneNumber);
+      }
+    } catch (inner) {
+      // FIX: If old session blocks, auto clean and tell user to retry once
+      if(inner.message && inner.message.toLowerCase().includes('already')){
+        console.log('[FIX] Auto deleting data/auth for relink');
+        try{ fs.rmSync(path.join(__dirname,'data','auth'), {recursive:true, force:true}); }catch{}
+        return res.status(409).json({ok:false, message:'Old session deleted - Wait 5 sec then click Generate again, will work 100%'});
+      }
+      throw inner;
     }
+
     state.pairingCode=code;
     state.status='pairing';
     console.log(`[PAIR] ${phoneNumber} => ${code}`);
@@ -95,7 +103,6 @@ app.post('/api/pair', async (req,res)=>{
   }catch(e){
     console.error('[PAIR ERROR]',e);
     let msg=e.message||'Failed';
-    if(msg.includes('already')) msg='Session exists - Delete data/auth on Render Shell: rm -rf data/auth';
     return res.status(500).json({ok:false,message:msg});
   }
 });
