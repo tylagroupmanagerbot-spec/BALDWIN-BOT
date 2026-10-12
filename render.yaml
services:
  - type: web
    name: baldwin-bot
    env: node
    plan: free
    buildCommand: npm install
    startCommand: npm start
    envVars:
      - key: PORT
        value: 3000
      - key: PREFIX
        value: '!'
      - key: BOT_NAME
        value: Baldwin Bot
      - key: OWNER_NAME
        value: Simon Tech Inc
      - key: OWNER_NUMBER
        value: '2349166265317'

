@@ -1,0 +1,37 @@
+{
+  "name": "baldwin-bot",
+  "description": "Baldwin Bot WhatsApp bot for Render deployment",
+  "repository": "https://github.com/tylagroupmanagerbot-spec/BALDWIN-BOT",
+  "logo": "https://raw.githubusercontent.com/tylagroupmanagerbot-spec/BALDWIN-BOT/render-bot-setup/assets/bot_pfp.jpg",
+  "keywords": ["whatsapp", "baileys", "bot", "render"],
+  "stack": "heroku-22",
+  "addons": [],
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    }
+  ],
+  "env": {
+    "PORT": {
+      "required": true,
+      "value": "3000"
+    },
+    "PREFIX": {
+      "required": false,
+      "value": "!"
+    },
+    "BOT_NAME": {
+      "required": false,
+      "value": "Baldwin Bot"
+    },
+    "OWNER_NAME": {
+      "required": false,
+      "value": "Simon Tech Inc"
+    },
+    "OWNER_NUMBER": {
+      "required": false,
+      "value": "2349166265317"
+    }
+  }
+}
+

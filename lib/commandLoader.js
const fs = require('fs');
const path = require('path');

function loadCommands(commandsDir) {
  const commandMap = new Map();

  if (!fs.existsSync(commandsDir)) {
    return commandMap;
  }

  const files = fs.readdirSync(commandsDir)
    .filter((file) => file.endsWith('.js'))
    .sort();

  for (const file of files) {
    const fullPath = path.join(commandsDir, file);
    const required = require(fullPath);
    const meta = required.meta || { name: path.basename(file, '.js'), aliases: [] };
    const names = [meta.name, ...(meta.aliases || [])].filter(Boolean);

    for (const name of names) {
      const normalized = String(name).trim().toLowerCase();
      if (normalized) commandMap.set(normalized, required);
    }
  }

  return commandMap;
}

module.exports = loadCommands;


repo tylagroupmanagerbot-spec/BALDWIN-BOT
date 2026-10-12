@@ -1,0 +1,169 @@
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const QRCode = require('qrcode');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
+const pino = require('pino');
+const loadCommands = require('./lib/commandLoader');
+
+function ensureFolders() {
+  const directories = ['./data', './data/auth', './assets'];
+  for (const dir of directories) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+async function getBotImageBuffer() {
+  const localCandidates = [
+    './assets/bot_pfp.jpg',
+    './assets/bot_pfp.jpeg',
+    './assets/bot_pfp.png',
+    './assets/bot_pfp.webp',
+    './assets/profile.jpg',
+    './assets/profile.png'
+  ];
+
+  for (const candidate of localCandidates) {
+    const resolved = path.resolve(candidate);
+    if (fs.existsSync(resolved)) {
+      return fs.readFileSync(resolved);
+    }
+  }
+
+  const remoteUrl = process.env.BOT_PFP_URL || 'https://raw.githubusercontent.com/tylagroupmanagerbot-spec/BALDWIN-BOT/render-bot-setup/assets/bot_pfp.jpg';
+
+  try {
+    const res = await axios.get(remoteUrl, { responseType: 'arraybuffer' });
+    return Buffer.from(res.data);
+  } catch (error) {
+    console.warn('Profile image not loaded:', error.message);
+    return null;
+  }
+}
+
+async function setBotProfile(sock, config) {
+  try {
+    if (!sock.user) return;
+    const image = await getBotImageBuffer();
+    if (!image) {
+      console.warn('No bot profile image found. Set assets/bot_pfp.jpg or BOT_PFP_URL.');
+      return;
+    }
+
+    await sock.updateProfilePicture(sock.user.id, image);
+    await sock.updateProfileName(config.BOT_NAME);
+    console.log('Bot profile updated successfully.');
+  } catch (error) {
+    console.warn('Profile update skipped:', error.message);
+  }
+}
+
+async function startBot({ state, config }) {
+  ensureFolders();
+
+  const { state: authState, saveCreds } = await useMultiFileAuthState(path.resolve('./data/auth'));
+  const { version } = await fetchLatestBaileysVersion();
+  const logger = pino({ level: 'info' });
+
+  const bot = makeWASocket({
+    version,
+    logger,
+    printQRInTerminal: false,
+    browser: Browsers.ubuntu('BALDWIN-BOT'),
+    auth: authState,
+    syncFullHistory: false,
+    markOnlineOnConnect: true,
+    generateHighQualityLinkPreview: true,
+    shouldSyncHistoryMessage: () => false
+  });
+
+  state.bot = bot;
+
+  bot.ev.on('creds.update', saveCreds);
+
+  bot.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      state.status = 'qr';
+      state.qr = qr;
+      console.log('Scan this QR code in WhatsApp mobile app:');
+      try {
+        const qrPng = await QRCode.toFile(path.join('./data', 'qrcode.png'), qr);
+        console.log('Saved QR code to ./data/qrcode.png');
+      } catch (err) {
+        console.warn('Could not save QR file:', err.message);
+      }
+
+      try {
+        console.log(await QRCode.toString(qr, { type: 'terminal', small: true }));
+      } catch (err) {
+        // Terminal QR is optional.
+      }
+      return;
+    }
+
+    if (connection === 'open') {
+      state.status = 'online';
+      state.qr = null;
+      console.log('Connection opened successfully.');
+      await setBotProfile(bot, config);
+      loadCommands(path.join(__dirname, 'commands'));
+      return;
+    }
+
+    if (connection === 'close') {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      console.log('Connection closed with status:', statusCode, 'reconnect:', shouldReconnect);
+
+      if (shouldReconnect) {
+        setTimeout(() => startBot({ state, config }), 3000);
+      }
+    }
+  });
+
+  bot.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg || (!msg.message && !msg.key)) return;
+    if (msg.key?.fromMe) return;
+
+    const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+    if (!text) return;
+
+    const prefix = config.PREFIX;
+    const trimmed = text.trim();
+    if (!trimmed.startsWith(prefix)) return;
+
+    const args = trimmed.slice(prefix.length).trim().split(/\s+/);
+    const commandName = args.shift()?.toLowerCase();
+    if (!commandName) return;
+
+    const commands = state.commands || loadCommands(path.join(__dirname, 'commands'));
+    state.commands = commands;
+
+    const cmd = commands.get(commandName) || [...commands.values()].find((command) => (command.meta?.aliases || []).includes(commandName));
+    if (!cmd) return;
+
+    try {
+      await cmd.run({
+        bot,
+        msg,
+        args,
+        text: trimmed,
+        config,
+        state,
+        prefix,
+        isOwner: msg.key.remoteJid === config.OWNER_JID || msg.key.remoteJid?.includes(config.OWNER_NUMBER)
+      });
+    } catch (error) {
+      console.error('Command error:', error);
+      await bot.sendMessage(msg.key.remoteJid, { text: 'Something went wrong while running this command.' });
+    }
+  });
+
+  return bot;
+}
+
+module.exports = { startBot, ensureFolders, getBotImageBuffer };
+
