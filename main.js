@@ -11,34 +11,36 @@ const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 const QRCode = require('qrcode');
+const fsExtra = require('fs-extra');
 
 const loadCommands = require('./lib/commandLoader');
 
 let reconnectTimer = null;
+let globalState = { status: 'waiting', mode: 'pairing', commands: new Map(), qr: null, pairingCode: null, number: null, connected: false };
+let botInstance = null;
+
+const FEATURES_PATH = path.join(__dirname, 'data', 'features.json');
+function getFeatures() {
+  try { return fsExtra.readJsonSync(FEATURES_PATH); } catch { return {}; }
+}
 
 process.on('uncaughtException', (e) => console.log('[ANTICRASH] Uncaught:', e.message));
 process.on('unhandledRejection', (e) => console.log('[ANTICRASH] Rejection:', e?.message || e));
 
-async function startBot({ state, config }) {
+async function startBot() {
+  const config = require('./config');
   const authDir = path.resolve(__dirname, 'data', 'auth');
   fs.mkdirSync(authDir, { recursive: true });
   fs.mkdirSync(path.resolve(__dirname, 'data'), { recursive: true });
 
-  state.status = 'connecting';
-  state.mode = state.mode || 'pairing';
-
+  globalState.status = 'connecting';
   const { state: authState, saveCreds } = await useMultiFileAuthState(authDir);
   const { version } = await fetchLatestBaileysVersion();
-
   const logger = pino({ level: 'silent' });
 
   const bot = makeWASocket({
-    version,
-    logger,
-    auth: {
-      creds: authState.creds,
-      keys: makeCacheableSignalKeyStore(authState.keys, logger)
-    },
+    version, logger,
+    auth: { creds: authState.creds, keys: makeCacheableSignalKeyStore(authState.keys, logger) },
     browser: Browsers.ubuntu(config.BOT_NAME || 'BALDWIN-BOT'),
     printQRInTerminal: false,
     syncFullHistory: false,
@@ -47,205 +49,178 @@ async function startBot({ state, config }) {
     getMessage: async () => undefined
   });
 
-  state.bot = bot;
+  botInstance = bot;
+  globalState.bot = bot;
 
   try {
     const cmdPath = path.join(__dirname, 'commands');
-    if(!fs.existsSync(cmdPath)) fs.mkdirSync(cmdPath, {recursive:true});
-    state.commands = loadCommands(cmdPath);
-    console.log(`[BALDWIN] Loaded ${state.commands.size} commands`);
+    if (!fs.existsSync(cmdPath)) fs.mkdirSync(cmdPath, { recursive: true });
+    globalState.commands = loadCommands(cmdPath);
+    console.log(`[BALDWIN] Loaded ${globalState.commands.size} commands`);
   } catch (e) {
     console.error('[BALDWIN] Command load fail:', e);
-    state.commands = new Map();
+    globalState.commands = new Map();
   }
 
   bot.ev.on('creds.update', saveCreds);
 
-  // ===== 100% LINK FIX =====
-  state.requestPairingCode = async (phoneNumber) => {
+  globalState.requestPairingCode = async (phoneNumber) => {
     try {
       let num = String(phoneNumber).replace(/\D/g, '');
       if (!num) throw new Error('Invalid number');
-      if (num.length < 10) throw new Error('Number too short, use country code. Ex: 234...');
+      if (num.length < 10) throw new Error('Number too short, use country code');
 
-      // FIX: If already registered, delete and restart fresh
       if (authState.creds.registered) {
-        console.log('[PAIR] Already registered, cleaning old auth for relink...');
+        console.log('[PAIR] Already registered, cleaning...');
         fs.rmSync(authDir, { recursive: true, force: true });
-        throw new Error('Old session removed. Wait 3 sec and Generate again - will work now');
+        throw Object.assign(new Error('Old session removed. Wait 3 sec and Generate again'), { status: 409 });
       }
 
-      console.log(`[PAIR] Requesting code for ${num}...`);
-
-      // FIX: Wait for socket to be ready
       let tries = 0;
-      while(!bot.ws || bot.ws.readyState!== 1) {
-        if(tries++ > 10) break;
-        await new Promise(r=>setTimeout(r,500));
+      while (!bot.ws || bot.ws.readyState!== 1) {
+        if (tries++ > 10) break;
+        await new Promise(r => setTimeout(r, 500));
       }
 
       const code = await bot.requestPairingCode(num);
-
-      state.pairingCode = code;
-      state.status = 'pairing';
-      state.lastPairNumber = num;
-
+      globalState.pairingCode = code;
+      globalState.status = 'pairing';
       console.log(`[PAIR] ✅ Code for ${num}: ${code}`);
-
-      setTimeout(() => {
-        if(state.pairingCode===code) {
-          state.pairingCode=null;
-          console.log('[PAIR] Code expired');
-        }
-      }, 90000);
-
+      setTimeout(() => { if (globalState.pairingCode === code) globalState.pairingCode = null; }, 90000);
       return code;
     } catch (err) {
+      if (err.status === 409) throw err;
       console.error('[PAIR FAIL]', err?.message || err);
-      if(err.message?.includes('already') || err.message?.includes('removed')){
-        throw err;
-      }
-      if(err.message?.includes('too many')){
-        throw new Error('Too many attempts. Wait 5 mins then try again');
-      }
-      throw new Error(err.message || 'Failed. Delete data/auth on Render Shell: rm -rf data/auth and try again');
+      throw new Error(err.message || 'Failed. Shell: rm -rf data/auth');
     }
   };
 
   bot.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
-
     if (qr) {
       try {
         const dataUrl = await QRCode.toDataURL(qr, { width: 500, margin: 1 });
-        state.qr = dataUrl;
-        state.qrRaw = qr;
-        if(state.status!=='pairing') state.status = 'qr';
+        globalState.qr = dataUrl;
+        globalState.qrRaw = qr;
+        if (globalState.status!== 'pairing') globalState.status = 'qr';
         await QRCode.toFile(path.join(__dirname, 'data', 'qrcode.png'), qr);
       } catch {}
-      console.log(`[BALDWIN] QR ready`);
+      console.log(`[BALDWIN] QR ready - Session 2 Terminal`);
     }
-
     if (connection === 'open') {
-      state.status = 'online';
-      state.connected = true;
-      state.qr = null;
-      state.qrRaw = null;
-      state.pairingCode = null;
-
+      globalState.status = 'connected';
+      globalState.connected = true;
+      globalState.qr = null;
+      globalState.pairingCode = null;
       const jid = bot.user?.id || '';
-      state.number = jid.split(':')[0];
-      state.jid = jid;
-
-      console.log(`\n[CONNECTED] ${state.number} Owner: ${config.OWNER_NAME}\n`);
-
-      try {
-        await bot.updateProfileStatus(`BALDWIN BOT • ${config.OWNER_NAME} • Online ⚡`);
-      } catch {}
-
+      globalState.number = jid.split(':')[0];
+      console.log(`\n[CONNECTED] ${globalState.number}\n`);
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-
-      try {
-        if(config.OWNER_JID) await bot.sendMessage(config.OWNER_JID, { text: `*${config.BOT_NAME} CONNECTED* ✅\nNumber: ${state.number}\n${new Date().toLocaleString()}` });
-      } catch {}
+      try { if (config.OWNER_JID) await bot.sendMessage(config.OWNER_JID, { text: `*${config.BOT_NAME} CONNECTED* ✅\n${globalState.number}` }); } catch {}
       return;
     }
-
     if (connection === 'close') {
-      state.connected = false;
+      globalState.connected = false;
       const code = lastDisconnect?.error?.output?.statusCode;
       const msg = lastDisconnect?.error?.message || '';
       console.log('[DISCONNECT]', code, msg);
-
-      // FIX: 401 + loggedOut both mean delete
       if (code === DisconnectReason.loggedOut || code === 401) {
-        state.status = 'logged-out';
-        console.log('[BALDWIN] Logged out - Auto cleaning auth in 2s...');
-        setTimeout(()=> {
-          try{ fs.rmSync(authDir, { recursive: true, force: true }); }catch{}
-          state.status = 'qr';
-        },2000);
+        globalState.status = 'logged-out';
+        setTimeout(() => { try { fs.rmSync(authDir, { recursive: true, force: true }); } catch {} globalState.status = 'qr'; }, 2000);
         return;
       }
-
-      state.status = 'reconnecting';
+      globalState.status = 'reconnecting';
       if (!reconnectTimer) {
         const delay = code === DisconnectReason.restartRequired? 2000 : 4000;
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null;
-          startBot({ state, config }).catch(console.error);
-        }, delay);
+        reconnectTimer = setTimeout(() => { reconnectTimer = null; startBot().catch(console.error); }, delay);
       }
     }
   });
 
-  // MESSAGE HANDLER - FIX FOR NO CMD
+  // ===== 1000 FEATURES LOGIC =====
+  bot.ev.on('group-participants.update', async (update) => {
+    const features = getFeatures();
+    try {
+      if (update.action === 'add' && features.welcome) {
+        for (let p of update.participants) {
+          await bot.sendMessage(update.id, { text: `Welcome @${p.split('@')[0]} 🌸\nBaldwin Bot • Simon Tech`, mentions: [p] });
+        }
+      }
+      if (update.action === 'remove' && features.goodbye) {
+        for (let p of update.participants) {
+          await bot.sendMessage(update.id, { text: `Goodbye @${p.split('@')[0]} 👋`, mentions: [p] });
+        }
+      }
+    } catch {}
+  });
+
   bot.ev.on('messages.upsert', async ({ messages, type }) => {
-    if(type!== 'notify') return;
-    for(const msg of messages){
+    if (type!== 'notify') return;
+    for (const msg of messages) {
       if (!msg?.message || msg.key?.fromMe) continue;
+      const features = getFeatures();
+      const text = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || msg.message.videoMessage?.caption || '';
+      const remoteJid = msg.key.remoteJid;
+      const isGroup = remoteJid.endsWith('@g.us');
 
-      const text = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || msg.message.videoMessage?.caption || msg.message.buttonsResponseMessage?.selectedButtonId || msg.message.listResponseMessage?.singleSelectReply?.selectedRowId || '';
+      // ANTILINK - from dashboard toggle
+      if (isGroup && features.antilink) {
+        if (/(https?:\/\/|www\.|chat\.whatsapp\.com)/i.test(text)) {
+          try {
+            const isAdmin = (await bot.groupMetadata(remoteJid)).participants.find(p => p.id === msg.key.participant)?.admin;
+            if (!isAdmin) {
+              await bot.sendMessage(remoteJid, { delete: msg.key });
+              await bot.sendMessage(remoteJid, { text: `🚫 Link detected! @${msg.key.participant.split('@')[0]}`, mentions: [msg.key.participant] });
+            }
+          } catch {}
+          continue;
+        }
+      }
+
       if (!text) continue;
-
       const prefix = config.PREFIX || '.';
-      // DEBUG LOG - you will see this in Render
-      if(text.startsWith(prefix)) console.log('[MSG]', text, 'FROM', msg.key.remoteJid);
-
       if (!text.trim().startsWith(prefix)) continue;
 
       const parts = text.trim().slice(prefix.length).trim().split(/\s+/);
       const cmdName = parts.shift()?.toLowerCase();
       if (!cmdName) continue;
 
-      let command = state.commands.get(cmdName);
-      if (!command) {
-        command = [...state.commands.values()].find(c => Array.isArray(c.aliases) && c.aliases.includes(cmdName));
-      }
-      if (!command) {
-        console.log('[CMD NOT FOUND]', cmdName, 'Available:', [...state.commands.keys()].slice(0,10));
-        continue;
-      }
+      let command = globalState.commands.get(cmdName);
+      if (!command) command = [...globalState.commands.values()].find(c => Array.isArray(c.aliases) && c.aliases.includes(cmdName));
+      if (!command) continue;
 
       try {
-        const remoteJid = msg.key.remoteJid;
-        const ownerNumber = String(config.OWNER_NUMBER || config.ORIGINAL_NUMBER || '').replace(/\D/g,'');
+        const ownerNumber = String(config.OWNER_NUMBER || '').replace(/\D/g, '');
         const sender = msg.key.participant || remoteJid;
         const isOwner = remoteJid === config.OWNER_JID || sender.includes(ownerNumber) || remoteJid.includes(ownerNumber);
+        if (config.PUBLIC_MODE === false &&!isOwner) continue;
 
-        // FIX: If PUBLIC_MODE true, allow everyone
-        if(config.PUBLIC_MODE === false &&!isOwner) {
-          console.log('[BLOCKED] Not owner and PUBLIC_MODE false');
-          continue;
-        }
-
-        await bot.sendPresenceUpdate('composing', remoteJid).catch(()=>{});
-
-        await command.run({
-          bot,
-          sock: bot,
-          msg,
-          m: msg,
-          args: parts,
-          text: parts.join(' '),
-          fullText: text,
-          config,
-          state,
-          prefix,
-          isOwner,
-          sender
-        });
-
+        await bot.sendPresenceUpdate('composing', remoteJid).catch(() => {});
+        await command.run({ bot, sock: bot, msg, m: msg, args: parts, text: parts.join(' '), fullText: text, config, state: globalState, prefix, isOwner, sender });
       } catch (err) {
         console.error(`[CMD ${cmdName}]`, err);
-        try { await bot.sendMessage(msg.key.remoteJid, { text: '❌ Error: '+ err.message }); } catch {}
+        try { await bot.sendMessage(remoteJid, { text: '❌ Error: ' + err.message }); } catch {}
       }
     }
   });
 
   global.__bot = bot;
-  global.__botState = state;
+  global.__botState = globalState;
   return bot;
 }
 
-module.exports = { startBot };
+// ===== EXPORTS FOR index.js DASHBOARD =====
+module.exports = {
+  startBot,
+  getQR: () => globalState.qr,
+  getPairCode: () => globalState.pairingCode,
+  get connectionStatus() { return globalState.status; },
+  get commandsCount() { return globalState.commands?.size || 0; },
+  generatePairingCode: async (phone) => {
+    if (!globalState.requestPairingCode) throw new Error('Bot not ready');
+    return await globalState.requestPairingCode(phone);
+  },
+  switchToQR: () => { globalState.mode = 'qr'; globalState.status = 'qr'; },
+  switchToPairing: () => { globalState.mode = 'pairing'; globalState.status = 'pairing'; },
+  getState: () => globalState
+};
